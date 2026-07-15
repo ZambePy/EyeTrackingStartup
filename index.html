@@ -3,23 +3,28 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>IrisFlow - Rastreador de Íris</title>
+    <title>IrisFlow</title>
   </head>
   <body>
+    <!--
+      Shell principal do IrisFlow.
+      #app mantém compatibilidade com o código de calibração existente.
+      #app-root é o container de telas gerenciado pelo Router.
+      #laser é o cursor de olhar — elevado acima de tudo via z-index.
+    -->
     <div id="app">
-      <video id="webcam" autoplay playsinline></video>
-      <canvas id="output_canvas"></canvas>
-      
-      <!-- O Laser -->
+      <!-- Câmera: oculta visualmente, usada pelo GazeEngine -->
+      <video id="webcam" autoplay playsinline style="display:none"></video>
+      <canvas id="output_canvas" style="display:none"></canvas>
+
+      <!-- Overlay de carregamento inicial -->
+      <div id="loading" class="overlay">Carregando IrisFlow...</div>
+
+      <!-- Container das telas (gerenciado pelo Router) -->
+      <div id="app-root"></div>
+
+      <!-- Cursor de olhar: sempre acima de tudo, inclusive overlays -->
       <div id="laser"></div>
-      
-      <div id="loading" class="overlay">Carregando Inteligência Artificial...</div>
-      
-      <!-- Botão Flutuante para abrir teclado -->
-      <div id="open-keyboard-btn" class="dwell-target" data-key="open_keyboard">
-        <div class="dwell-fill"></div>
-        <span class="key-content">⌨️ TECLADO</span>
-      </div>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

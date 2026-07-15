@@ -9,6 +9,7 @@
 
 import { mapGaze, startPreCalibration } from './calibration';
 import { exportSessionLog, isSessionLogging } from './sessionLog';
+import { getViewport } from './viewport';
 
 export interface AccuracyResult {
   meanError: number;
@@ -91,8 +92,8 @@ export function startAccuracyTest(onComplete: (result: AccuracyResult) => void):
   const diagnostics: PointDiagnostic[] = [];
   const allIodSamples: number[] = [];
 
-  const vw = document.documentElement.clientWidth;
-  const vh = document.documentElement.clientHeight;
+  // Sprint 3 – T5: viewport via helper único (consistência com predição)
+  const { w: vw, h: vh } = getViewport();
 
   function runNextPoint(): void {
     if (pointIndex >= VALIDATION_POINTS.length) {
@@ -102,7 +103,7 @@ export function startAccuracyTest(onComplete: (result: AccuracyResult) => void):
     }
 
     const vp = VALIDATION_POINTS[pointIndex];
-    showValidationDot(overlay, vp, pointIndex);
+    showValidationDot(overlay, vp, pointIndex, vw, vh);
 
     const startTime = performance.now();
     const rawX: number[] = [];
@@ -116,6 +117,7 @@ export function startAccuracyTest(onComplete: (result: AccuracyResult) => void):
     function collect(): void {
       const elapsed = performance.now() - startTime;
 
+      // GazeResult ainda expõe .x e .y em pixels — API compatível
       const gaze = mapGaze(currentFeaturesLeft, currentFeaturesRight);
       if (gaze) {
         rawX.push(gaze.x);
@@ -197,10 +199,13 @@ function createAccuracyOverlay(): HTMLDivElement {
   return overlay;
 }
 
+// Sprint 3 – T5: dot posicionado em px (consistente com targets de medição)
 function showValidationDot(
   overlay: HTMLDivElement,
   vp: { name: string; screenX: number; screenY: number },
-  index: number
+  index: number,
+  vw: number,
+  vh: number
 ): void {
   const old = document.getElementById("accuracy-dot");
   if (old) old.remove();
@@ -208,8 +213,8 @@ function showValidationDot(
   const dot = document.createElement("div");
   dot.id = "accuracy-dot";
   dot.className = "accuracy-dot";
-  dot.style.left = `${vp.screenX * 100}vw`;
-  dot.style.top = `${vp.screenY * 100}vh`;
+  dot.style.left = `${Math.round(vp.screenX * vw)}px`;
+  dot.style.top  = `${Math.round(vp.screenY * vh)}px`;
   dot.innerHTML = `<div class="dot-inner"></div>`;
 
   const instr = overlay.querySelector(".accuracy-instruction") as HTMLElement;

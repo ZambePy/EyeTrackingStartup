@@ -1,0 +1,37 @@
+appId: com.irisflow.app
+productName: IrisFlow
+copyright: IrisFlow Team
+
+directories:
+  output: release
+
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - package.json
+
+# WASM e modelos fora do ASAR para que fetch(file://) funcione
+asarUnpack:
+  - dist/mediapipe/**
+  - dist/models/**
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+
+mac:
+  target: dmg
+
+linux:
+  target: AppImage
+
+extraMetadata:
+  main: dist-electron/main.js

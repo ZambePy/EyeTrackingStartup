@@ -38,11 +38,24 @@ export interface AdvancedFrameFeatures {
   quality: QualityFeatures;
 }
 
+// Sprint 4 – T1/T2: pose 3D métrico para compensação de drift inter-sessão (G5)
+export interface HeadPose {
+  tx: number;          // translação X (faceMatrix[12] ou eyeCenter.x)
+  ty: number;          // translação Y (faceMatrix[13] ou eyeCenter.y)
+  tz: number;          // profundidade (faceMatrix[14] ou eyeCenter.z)
+  yaw: number;         // rotação horizontal (rad)
+  pitch: number;       // rotação vertical (rad)
+  roll: number;        // inclinação (rad)
+  distanceCm: number;  // estimativa de distância via íris
+}
+
 export interface ExtractorResult {
   featuresLeft: number[];
   featuresRight: number[];
   blinkDetected: boolean;
   ear: number;
+  headPose: HeadPose;
+  distanceCm: number;
   advancedFeatures?: AdvancedFrameFeatures;
 }
 
@@ -108,7 +121,7 @@ const MIN_HISTORY = 15;
 
 export function extractEyeFeatures(landmarks: Point3D[], faceMatrix?: Float32Array): ExtractorResult {
   if (landmarks.length < 478) {
-    return { featuresLeft: [], featuresRight: [], blinkDetected: false, ear: 0 };
+    return { featuresLeft: [], featuresRight: [], blinkDetected: false, ear: 0, headPose: { tx: 0, ty: 0, tz: 0, yaw: 0, pitch: 0, roll: 0, distanceCm: 60 }, distanceCm: 60 };
   }
 
   // 1. Head Pose Normalization (EyeTrax Logic)
@@ -227,6 +240,15 @@ export function extractEyeFeatures(landmarks: Point3D[], faceMatrix?: Float32Arr
   const pEllL = { width: dist3D(landmarks[469], landmarks[471]), height: dist3D(landmarks[470], landmarks[472]) };
   const pEllR = { width: dist3D(landmarks[474], landmarks[476]), height: dist3D(landmarks[475], landmarks[477]) };
 
+  // Sprint 4 – T1/T2: depth from iris 2D radius (iris real ≈ 11.7mm; 0.0074 ≈ 0.117 / focal_equiv_15.84)
+  const irisRadius2DL = (dist2D(irisCenterL, landmarks[469]) + dist2D(irisCenterL, landmarks[471])) / 2;
+  const irisRadius2DR = (dist2D(irisCenterR, landmarks[474]) + dist2D(irisCenterR, landmarks[476])) / 2;
+  const avgIrisRadius2D = (irisRadius2DL + irisRadius2DR) / 2 + 1e-9;
+  const distanceCm = 60.0 * 0.0074 / avgIrisRadius2D;
+
+  featuresLeft.push(pos3D.x, pos3D.y, pos3D.z, distanceCm);
+  featuresRight.push(pos3D.x, pos3D.y, pos3D.z, distanceCm);
+
   const geometry: GeometryFeatures = {
     pupilCenterLeft: irisCenterL,
     pupilCenterRight: irisCenterR,
@@ -265,5 +287,6 @@ export function extractEyeFeatures(landmarks: Point3D[], faceMatrix?: Float32Arr
     quality
   };
 
-  return { featuresLeft, featuresRight, blinkDetected, ear, advancedFeatures };
+  const headPose: HeadPose = { tx: pos3D.x, ty: pos3D.y, tz: pos3D.z, yaw, pitch, roll, distanceCm };
+  return { featuresLeft, featuresRight, blinkDetected, ear, headPose, distanceCm, advancedFeatures };
 }

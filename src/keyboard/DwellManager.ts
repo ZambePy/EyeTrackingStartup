@@ -8,7 +8,8 @@ export class DwellManager {
   
   // Como o app usa requestAnimationFrame, essa função será chamada continuamente
   // immediateSelect=true (piscada intencional) dispara o alvo atual sem esperar dwell
-  public update(cursorX: number, cursorY: number, immediateSelect = false) {
+  // lowConfidence=true (predição fora do hull) exige dwell 2× mais longo (Sprint 3 – T4)
+  public update(cursorX: number, cursorY: number, immediateSelect = false, lowConfidence = false) {
     // Oculta o cursor temporariamente para o elementFromPoint não pegar o próprio laser
     const laser = document.getElementById('laser');
     let displayOrigin = '';
@@ -49,7 +50,10 @@ export class DwellManager {
         }
         // Dwell normal: aguarda tempo configurado
         const elapsed = performance.now() - this.dwellStartTime;
-        const requiredDwellTime = this.currentTarget.dataset.key === 'power' ? 2000 : this.DWELL_TIME;
+        // Sprint 3 – T4: zonas de baixa confiança requerem dwell 2× maior
+        const requiredDwellTime = this.currentTarget.dataset.key === 'power' ? 2000
+          : lowConfidence ? this.DWELL_TIME * 2
+          : this.DWELL_TIME;
         if (elapsed >= requiredDwellTime) {
           this.triggerClick(this.currentTarget);
           this.clearTarget();
@@ -101,6 +105,13 @@ export class DwellManager {
       // Future: add tracking pause logic here
     } else if (key === 'copy') {
       navigator.clipboard.writeText(KeyboardState.getState().text).catch(e => console.error(e));
+    } else if (key.startsWith('nav:')) {
+      // Navegação entre telas — evento capturado pelo Router
+      const route = key.slice(4)
+      document.dispatchEvent(new CustomEvent('irisflow:navigate', {
+        bubbles: true,
+        detail: { route },
+      }))
     } else {
       if (key.length === 1) {
         const state = KeyboardState.getState();

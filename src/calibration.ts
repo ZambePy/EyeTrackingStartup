@@ -1,7 +1,11 @@
-import { trainRidgeModel, predictRidge } from './ridge';
+import { trainRidgeModel, predictRidge, findBestLambda } from './ridge';
 import type { RidgeModel } from './ridge';
+import type { HeadPose } from './extractor';
 import { startAccuracyTest } from './accuracy';
 import { StandardScaler } from './scaler';
+import { getViewport } from './viewport';
+
+// ── Interfaces ────────────────────────────────────────────────────────────────
 
 interface CalibrationPoint {
   screenX: number;
@@ -10,15 +14,22 @@ interface CalibrationPoint {
   featuresRight: number[];
 }
 
+// DynamicSample sem weight — só amostras de fixação são adicionadas (G4)
 interface DynamicSample {
   screenX: number;
   screenY: number;
   featuresLeft: number[];
   featuresRight: number[];
-  weight: number;
 }
 
-// ── Grade 3×3 (9 pontos) — foco nos cantos, bordas e centro ──────────────────
+// Resultado de mapeamento de olhar com flag de baixa confiança (G7)
+export interface GazeResult {
+  x: number;              // posição em pixels (clamped ao viewport)
+  y: number;
+  lowConfidence: boolean; // true quando predição cai fora do hull de calibração
+}
+
+// ── Grade 3×3 (9 pontos) ─────────────────────────────────────────────────────
 const TARGET_POINTS = [
   { name: "Canto Superior Esquerdo",  screenX: 0.05, screenY: 0.05 },
   { name: "Superior Centro",          screenX: 0.50, screenY: 0.05 },
@@ -31,12 +42,14 @@ const TARGET_POINTS = [
   { name: "Canto Inferior Direito",   screenX: 0.95, screenY: 0.95 },
 ];
 
-const COLLECTION_MS        = 1500;
-const TRANSITION_MS        = 1000;
-const DYN_MOVE_MS          = 1200;
-const DYN_PULSE_MS         = 1500;
+const COLLECTION_MS  = 1500;
+const TRANSITION_MS  = 1000;
+const DYN_MOVE_MS    = 1200;
+const DYN_PULSE_MS   = 1500;
+// Sprint 3 – T2: descarta primeiros 300ms de cada fixação (perseguição ocular ainda resolvendo)
+const ONSET_SKIP_MS  = 300;
 
-// Snake path 3×3 cobrindo toda a tela
+// Snake path 3×3
 const DYNAMIC_WAYPOINTS = [
   { x: 0.05, y: 0.05 },
   { x: 0.50, y: 0.05 },
@@ -49,6 +62,7 @@ const DYNAMIC_WAYPOINTS = [
   { x: 0.95, y: 0.95 },
 ];
 
+// ── Estado de calibração ──────────────────────────────────────────────────────
 let profile: CalibrationPoint[] = [];
 export let isCalibrating = false;
 let isDynamicCalibrating = false;
@@ -62,12 +76,31 @@ let dynamicSamples: DynamicSample[] = [];
 let dynamicBallX = 0.5;
 let dynamicBallY = 0.5;
 let dynamicIsFixation = false;
+let dynamicFixationStartTime = 0; // Sprint 3 – T2: onset skip na fase dinâmica
 
-// ── Ridge Regression model ───────────────────────────────────────────────────
+// Sprint 3 – T2: histórico de EAR para detecção de fechamento parcial
+const calibEarHistory: number[] = [];
+// Sprint 3 – T6: variâncias dos pontos bem-sucedidos para threshold adaptativo
+let baselineVariances: number[] = [];
+
+// ── Modelos Ridge e Scaler ────────────────────────────────────────────────────
 let ridgeModelLeft: RidgeModel | null = null;
 let ridgeModelRight: RidgeModel | null = null;
 export const featureScalerLeft = new StandardScaler();
 export const featureScalerRight = new StandardScaler();
+
+// Sprint 3 – T4: hull convexo (bounding box) dos pontos de calibração
+let calibHull = { minX: 0.05, maxX: 0.95, minY: 0.05, maxY: 0.95 };
+
+// Sprint 4 – T3/T4: versão do perfil e estado inter-sessão
+const PROFILE_VERSION = 2;
+let latestFeaturesLeft: number[] = [];
+let latestFeaturesRight: number[] = [];
+let calibrationPoses: HeadPose[] = [];
+let refHeadPose: HeadPose | null = null;
+let poseBuffer: HeadPose[] = [];
+let poseCheckDone = false;
+let sessionCorrection: { scaleX: number; biasX: number; scaleY: number; biasY: number } | null = null;
 
 // ── Session counter ──────────────────────────────────────────────────────────
 let sessionCount = 0;
@@ -79,39 +112,70 @@ function loadSessionCount(): void {
   } catch (_) {}
 }
 
-// ── Pré-calibração: métricas de rosto ────────────────────────────────────────
+// ── Pré-calibração ────────────────────────────────────────────────────────────
 export let isPreCalibrating = false;
 
-// Intervalo ideal do IOD normalizado (em coordenadas de imagem 0-1)
-// ~0.05 a ~0.12 corresponde a ~40cm a ~90cm de distância
-const IOD_MIN = 0.045;
-const IOD_MAX = 0.13;
+const IOD_MIN       = 0.045;
+const IOD_MAX       = 0.13;
 const IOD_IDEAL_MIN = 0.06;
 const IOD_IDEAL_MAX = 0.10;
 
 export function feedFaceMetrics(detected: boolean, iod: number): void {
-  if (isPreCalibrating) {
-    updatePreCalibrationUI(detected, iod);
-  }
+  if (isPreCalibrating) updatePreCalibrationUI(detected, iod);
 }
+
+// ── Sprint 3 – T2: filtragem por fechamento parcial ──────────────────────────
+// Rejeita frame se EAR < 85% da média adaptativa (fechamento parcial do olho)
+function isPartialBlink(ear: number): boolean {
+  if (ear <= 0) return false;
+  calibEarHistory.push(ear);
+  if (calibEarHistory.length > 120) calibEarHistory.shift();
+  if (calibEarHistory.length < 20) return false;
+  const mean = calibEarHistory.reduce((a, b) => a + b, 0) / calibEarHistory.length;
+  return ear < mean * 0.85;
+}
+
+// ── Sprint 3 – T6: threshold de variância adaptativo ─────────────────────────
+// Base de 0.0005; após 3 pontos bem-sucedidos usa 3× a variância observada.
+const BASE_VARIANCE_THRESHOLD  = 0.0005;
+const VARIANCE_SCALE_FACTOR    = 3.0;
+
+function getVarianceThreshold(): number {
+  if (baselineVariances.length >= 3) {
+    const mean = baselineVariances.reduce((a, b) => a + b, 0) / baselineVariances.length;
+    return Math.max(BASE_VARIANCE_THRESHOLD, mean * VARIANCE_SCALE_FACTOR);
+  }
+  return BASE_VARIANCE_THRESHOLD;
+}
+
+// ── Persistência ──────────────────────────────────────────────────────────────
 
 export function loadProfile(): boolean {
   try {
     const saved = localStorage.getItem("calibrationProfile");
     if (saved) {
       const parsed = JSON.parse(saved);
+      // Sprint 4 – T4: rejeita perfil com versão de features incompatível
+      if (parsed.version !== PROFILE_VERSION) {
+        console.warn(`[IrisFlow S4] Perfil v${parsed.version ?? 1} incompatível com v${PROFILE_VERSION} — recalibração necessária`);
+        return false;
+      }
       if (parsed.ridgeModelLeft && parsed.ridgeModelRight && parsed.scalerParamsLeft && parsed.scalerParamsRight) {
-        ridgeModelLeft = parsed.ridgeModelLeft;
+        ridgeModelLeft  = parsed.ridgeModelLeft;
         ridgeModelRight = parsed.ridgeModelRight;
         featureScalerLeft.setParams(parsed.scalerParamsLeft.means, parsed.scalerParamsLeft.stds);
         featureScalerRight.setParams(parsed.scalerParamsRight.means, parsed.scalerParamsRight.stds);
+        if (parsed.hull) calibHull = parsed.hull;
+        if (parsed.refHeadPose) refHeadPose = parsed.refHeadPose;
+        poseCheckDone = false;
+        sessionCorrection = null;
         return true;
       }
     }
   } catch (e) {
     console.error("Erro ao carregar calibrationProfile:", e);
   }
-  ridgeModelLeft = null;
+  ridgeModelLeft  = null;
   ridgeModelRight = null;
   return false;
 }
@@ -119,18 +183,29 @@ export function loadProfile(): boolean {
 function saveProfile() {
   if (ridgeModelLeft && ridgeModelRight) {
     localStorage.setItem("calibrationProfile", JSON.stringify({
+      version:           PROFILE_VERSION,
       ridgeModelLeft,
       ridgeModelRight,
-      scalerParamsLeft: featureScalerLeft.getParams(),
-      scalerParamsRight: featureScalerRight.getParams()
+      scalerParamsLeft:  featureScalerLeft.getParams(),
+      scalerParamsRight: featureScalerRight.getParams(),
+      hull:              calibHull,
+      refHeadPose,
     }));
   }
 }
 
 export function clearCalibration() {
-  profile    = [];
-  ridgeModelLeft = null;
-  ridgeModelRight = null;
+  profile           = [];
+  ridgeModelLeft    = null;
+  ridgeModelRight   = null;
+  baselineVariances = [];
+  calibHull         = { minX: 0.05, maxX: 0.95, minY: 0.05, maxY: 0.95 };
+  // Sprint 4 – T3/T4: reset inter-session state
+  refHeadPose       = null;
+  calibrationPoses  = [];
+  poseBuffer        = [];
+  poseCheckDone     = false;
+  sessionCorrection = null;
   localStorage.removeItem("calibrationProfile");
   localStorage.removeItem("accuracyResult");
   updateStatusUI();
@@ -140,7 +215,7 @@ export function isCalibrated(): boolean {
   return ridgeModelLeft !== null && ridgeModelRight !== null;
 }
 
-// ── Pré-Calibração: tela de setup antes da calibração ────────────────────────
+// ── Pré-Calibração ────────────────────────────────────────────────────────────
 
 export function startPreCalibration() {
   if (isCalibrating || isPreCalibrating) return;
@@ -220,7 +295,6 @@ function createPreCalibrationOverlay() {
 }
 
 function updatePreCalibrationUI(detected: boolean, iod: number) {
-  // Face detection
   const faceIcon = document.getElementById("precalib-face-icon");
   const faceDesc = document.getElementById("precalib-face-desc");
   if (faceIcon && faceDesc) {
@@ -235,7 +309,6 @@ function updatePreCalibrationUI(detected: boolean, iod: number) {
     }
   }
 
-  // Distance
   const distIcon = document.getElementById("precalib-distance-icon");
   const distDesc = document.getElementById("precalib-distance-desc");
   const distIndicator = document.getElementById("precalib-dist-indicator");
@@ -248,7 +321,6 @@ function updatePreCalibrationUI(detected: boolean, iod: number) {
       distIndicator.style.display = "none";
     } else {
       distIndicator.style.display = "block";
-      // Mapear IOD para posição na barra (0% = muito longe, 100% = muito perto)
       const pct = Math.min(Math.max((iod - IOD_MIN) / (IOD_MAX - IOD_MIN), 0), 1) * 100;
       distIndicator.style.left = `${pct}%`;
 
@@ -268,7 +340,6 @@ function updatePreCalibrationUI(detected: boolean, iod: number) {
     }
   }
 
-  // Lighting (usa o estado do warning de iluminação já existente)
   const lightIcon = document.getElementById("precalib-light-icon");
   const lightDesc = document.getElementById("precalib-light-desc");
   const lightingWarning = document.getElementById("lighting-warning");
@@ -295,6 +366,7 @@ function closePreCalibration() {
   document.getElementById("precalib-overlay")?.remove();
 }
 
+// ── Variância de features ─────────────────────────────────────────────────────
 function calculateFeatureVariance(featuresList: number[][]): number {
   if (featuresList.length === 0) return 0;
   const numFeatures = featuresList[0].length;
@@ -317,16 +389,19 @@ function calculateFeatureVariance(featuresList: number[][]): number {
 
 export function startCalibrationMode() {
   if (isCalibrating) return;
-  isCalibrating = true;
-  currentPointIndex = 0;
-  isCollecting = false;
-  profile = [];
-  dynamicSamples = [];
-  collectedFeaturesLeft = [];
+  isCalibrating         = true;
+  currentPointIndex     = 0;
+  isCollecting          = false;
+  profile               = [];
+  dynamicSamples        = [];
+  collectedFeaturesLeft  = [];
   collectedFeaturesRight = [];
-  ridgeModelLeft = null;
-  ridgeModelRight = null;
-
+  ridgeModelLeft        = null;
+  ridgeModelRight       = null;
+  baselineVariances     = [];
+  calibEarHistory.length = 0;
+  calibrationPoses      = [];
+  sessionCorrection     = null;
   createCalibrationOverlay();
   startCountdown();
 }
@@ -343,18 +418,11 @@ function startCountdown() {
       <span class="highlight">Foque no ponto que aparecerá e não desvie o olhar.</span>
     `;
   }
-  
+
   let count = 5;
   const countDisplay = document.createElement("div");
   countDisplay.id = "calibration-countdown";
-  countDisplay.style.position = "absolute";
-  countDisplay.style.top = "50%";
-  countDisplay.style.left = "50%";
-  countDisplay.style.transform = "translate(-50%, -50%)";
-  countDisplay.style.fontSize = "6rem";
-  countDisplay.style.color = "#00fff0";
-  countDisplay.style.fontWeight = "bold";
-  countDisplay.style.textShadow = "0 0 20px rgba(0, 255, 240, 0.5)";
+  countDisplay.style.cssText = "position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:6rem;color:#00fff0;font-weight:bold;text-shadow:0 0 20px rgba(0,255,240,0.5)";
   countDisplay.innerText = count.toString();
   overlay.appendChild(countDisplay);
 
@@ -378,7 +446,9 @@ function runAccuracyTest() {
 
 function cancelCalibration() {
   isDynamicCalibrating = false;
-  dynamicSamples = [];
+  dynamicSamples       = [];
+  baselineVariances    = [];
+  calibEarHistory.length = 0;
   cleanupOverlay();
   loadProfile();
   updateStatusUI();
@@ -415,11 +485,13 @@ function showNextPoint() {
   document.getElementById("calibration-dot")?.remove();
 
   const point = TARGET_POINTS[currentPointIndex];
+  // Sprint 3 – T5: posicionamento em px via clientWidth/Height (consistente com predição)
+  const { w, h } = getViewport();
   const dot = document.createElement("div");
   dot.id = "calibration-dot";
   dot.className = "calibration-dot";
-  dot.style.left = `${point.screenX * 100}vw`;
-  dot.style.top  = `${point.screenY * 100}vh`;
+  dot.style.left = `${Math.round(point.screenX * w)}px`;
+  dot.style.top  = `${Math.round(point.screenY * h)}px`;
   dot.innerHTML = `
     <div class="dot-inner"></div>
     <div class="dot-pulse"></div>
@@ -436,8 +508,7 @@ function showNextPoint() {
       Olhe fixamente para o ponto <span class="highlight">${currentPointIndex + 1}/${TARGET_POINTS.length}</span>
     `;
   }
-  
-  // Transição Automática após um breve momento visual
+
   setTimeout(() => {
     startCollection();
   }, TRANSITION_MS);
@@ -445,9 +516,9 @@ function showNextPoint() {
 
 function startCollection() {
   if (isDynamicCalibrating || isCollecting || !isCalibrating) return;
-  isCollecting = true;
-  collectionStartTime = performance.now();
-  collectedFeaturesLeft = [];
+  isCollecting          = true;
+  collectionStartTime   = performance.now();
+  collectedFeaturesLeft  = [];
   collectedFeaturesRight = [];
 
   const dot = document.getElementById("calibration-dot");
@@ -458,21 +529,44 @@ function startCollection() {
   }
 }
 
-// ── Funções Removidas ────────────────────────────────────────────
+// ── Ingestão de dados de calibração ──────────────────────────────────────────
 
-export function feedRawData(featuresLeft: number[], featuresRight: number[]) {
+// ear é passado pelo main.ts para filtragem de fechamento parcial (T2)
+// headPose passado pelo main.ts para acúmulo da pose de referência (Sprint 4 – T4)
+export function feedRawData(
+  featuresLeft: number[],
+  featuresRight: number[],
+  ear = 1.0,
+  headPose?: HeadPose,
+) {
+  // Sprint 4 – T3: mantém as últimas features para express recalibration
+  latestFeaturesLeft  = featuresLeft;
+  latestFeaturesRight = featuresRight;
+
   if (isDynamicCalibrating) {
+    // Sprint 3 – T1: só amostras de fixação (sem trânsito)
+    if (!dynamicIsFixation) return;
+    // Sprint 3 – T2: descarta onset de cada fixação
+    if (performance.now() - dynamicFixationStartTime < ONSET_SKIP_MS) return;
+    // Sprint 3 – T2: descarta fechamento parcial
+    if (isPartialBlink(ear)) return;
+
     dynamicSamples.push({
-      screenX: dynamicBallX,
-      screenY: dynamicBallY,
+      screenX:      dynamicBallX,
+      screenY:      dynamicBallY,
       featuresLeft,
       featuresRight,
-      weight: dynamicIsFixation ? 3.0 : 1.0
     });
+    // Sprint 4 – T4: acumula pose durante fixações de calibração
+    if (headPose) calibrationPoses.push(headPose);
     return;
   }
 
   if (!isCalibrating || !isCollecting) return;
+  // Sprint 3 – T2: onset skip na calibração estática
+  if (performance.now() - collectionStartTime < ONSET_SKIP_MS) return;
+  // Sprint 3 – T2: rejeita fechamento parcial
+  if (isPartialBlink(ear)) return;
 
   collectedFeaturesLeft.push(featuresLeft);
   collectedFeaturesRight.push(featuresRight);
@@ -484,37 +578,35 @@ export function feedRawData(featuresLeft: number[], featuresRight: number[]) {
 }
 
 function processStaticPoint() {
-  const avgVarLeft = calculateFeatureVariance(collectedFeaturesLeft);
+  const avgVarLeft  = calculateFeatureVariance(collectedFeaturesLeft);
   const avgVarRight = calculateFeatureVariance(collectedFeaturesRight);
-  
-  const VARIANCE_THRESHOLD = 0.0005; // Sensibilidade para distração (cabeça ou olhos)
-  
-  if (avgVarLeft > VARIANCE_THRESHOLD || avgVarRight > VARIANCE_THRESHOLD) {
+
+  // Sprint 3 – T6: threshold adaptativo baseado em pontos anteriores bem-sucedidos
+  const threshold = getVarianceThreshold();
+
+  if (avgVarLeft > threshold || avgVarRight > threshold) {
     const instruction = document.getElementById("calibration-instruction");
     if (instruction) {
-      instruction.innerHTML = `<span class="highlight" style="color: #ff3366;">Atenção! Você se distraiu ou piscou muito.</span><br>Reiniciando este ponto...`;
+      instruction.innerHTML = `<span class="highlight" style="color:#ff3366;">Atenção! Movimento detectado.</span><br>Reiniciando este ponto…`;
     }
     const dot = document.getElementById("calibration-dot");
     if (dot) dot.classList.add("unstable");
-    
-    // Reinicia o mesmo ponto após um feedback visual
-    setTimeout(() => {
-      showNextPoint();
-    }, 2000);
+    setTimeout(() => { showNextPoint(); }, 2000);
     return;
   }
 
-  // Em vez de extrair mediana, adicionamos todos os frames do ponto no profile
-  // O Standard Scaler e Ridge L2 vão tratar ruídos e redundâncias
+  // Sprint 3 – T6: registra variância do ponto bem-sucedido para calibrar o threshold
+  baselineVariances.push(Math.max(avgVarLeft, avgVarRight));
+
   const targetX = TARGET_POINTS[currentPointIndex].screenX;
   const targetY = TARGET_POINTS[currentPointIndex].screenY;
 
   for (let i = 0; i < collectedFeaturesLeft.length; i++) {
     profile.push({
-      screenX: targetX,
-      screenY: targetY,
-      featuresLeft: collectedFeaturesLeft[i],
-      featuresRight: collectedFeaturesRight[i]
+      screenX:      targetX,
+      screenY:      targetY,
+      featuresLeft:  collectedFeaturesLeft[i],
+      featuresRight: collectedFeaturesRight[i],
     });
   }
 
@@ -535,8 +627,6 @@ function processStaticPoint() {
   }, TRANSITION_MS);
 }
 
-// Warnings removidos
-
 function handleGlobalKeyDown(e: KeyboardEvent) {
   if (!isCalibrating || isCollecting || isDynamicCalibrating) return;
   if (e.code === "Space" || e.code === "Enter") {
@@ -549,7 +639,6 @@ function handleGlobalKeyDown(e: KeyboardEvent) {
 
 function transitionToDynamicPhase() {
   document.getElementById("calibration-dot")?.remove();
-
   const instruction = document.getElementById("calibration-instruction");
   if (instruction) {
     instruction.innerHTML = `
@@ -557,13 +646,12 @@ function transitionToDynamicPhase() {
       <p class="phase-sub">Preparando calibração dinâmica…</p>
     `;
   }
-
   setTimeout(startDynamicCalibration, 2000);
 }
 
 function startDynamicCalibration() {
   isDynamicCalibrating = true;
-  dynamicSamples = [];
+  dynamicSamples       = [];
 
   const overlay = document.getElementById("calibration-overlay");
   if (!overlay) return;
@@ -577,7 +665,6 @@ function startDynamicCalibration() {
     `;
   }
 
-  // Indicador de progresso
   const progressEl = document.createElement("div");
   progressEl.id = "dynamic-progress";
   progressEl.className = "dynamic-progress";
@@ -589,13 +676,14 @@ function startDynamicCalibration() {
   });
   overlay.appendChild(progressEl);
 
-  // Bolinha no primeiro waypoint
+  // Sprint 3 – T5: usa clientWidth/Height para consistência com predição (G8)
+  const { w, h } = getViewport();
   const ball = document.createElement("div");
   ball.id = "dynamic-ball";
   ball.className = "dynamic-ball";
   const wp0 = DYNAMIC_WAYPOINTS[0];
-  ball.style.left = `${wp0.x * window.innerWidth}px`;
-  ball.style.top  = `${wp0.y * window.innerHeight}px`;
+  ball.style.left = `${Math.round(wp0.x * w)}px`;
+  ball.style.top  = `${Math.round(wp0.y * h)}px`;
   dynamicBallX = wp0.x;
   dynamicBallY = wp0.y;
   overlay.appendChild(ball);
@@ -627,10 +715,12 @@ function moveBallSmoothly(
   target: { x: number; y: number },
   onComplete: () => void
 ) {
-  const startX = dynamicBallX * window.innerWidth;
-  const startY = dynamicBallY * window.innerHeight;
-  const endX   = target.x * window.innerWidth;
-  const endY   = target.y * window.innerHeight;
+  // Sprint 3 – T5: usa clientWidth/Height (G8)
+  const { w, h } = getViewport();
+  const startX = dynamicBallX * w;
+  const startY = dynamicBallY * h;
+  const endX   = target.x * w;
+  const endY   = target.y * h;
   const t0     = performance.now();
 
   dynamicIsFixation = false;
@@ -639,10 +729,10 @@ function moveBallSmoothly(
     const t = Math.min((performance.now() - t0) / DYN_MOVE_MS, 1.0);
     const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 
-    dynamicBallX = (startX + (endX - startX) * e) / window.innerWidth;
-    dynamicBallY = (startY + (endY - startY) * e) / window.innerHeight;
-    ball.style.left = `${dynamicBallX * window.innerWidth}px`;
-    ball.style.top  = `${dynamicBallY * window.innerHeight}px`;
+    dynamicBallX = (startX + (endX - startX) * e) / w;
+    dynamicBallY = (startY + (endY - startY) * e) / h;
+    ball.style.left = `${Math.round(dynamicBallX * w)}px`;
+    ball.style.top  = `${Math.round(dynamicBallY * h)}px`;
 
     if (t < 1.0) {
       requestAnimationFrame(frame);
@@ -657,7 +747,10 @@ function moveBallSmoothly(
 }
 
 function pulseBall(ball: HTMLElement, onComplete: () => void) {
-  dynamicIsFixation = true;
+  dynamicIsFixation     = true;
+  // Sprint 3 – T2: registra início da fixação para onset skip
+  dynamicFixationStartTime = performance.now();
+
   ball.classList.remove("pulsing");
   void ball.offsetWidth;
   ball.classList.add("pulsing");
@@ -669,35 +762,63 @@ function pulseBall(ball: HTMLElement, onComplete: () => void) {
   }, DYN_PULSE_MS);
 }
 
+// ── Completar calibração dinâmica ─────────────────────────────────────────────
 function completeDynamicCalibration() {
   isDynamicCalibrating = false;
-  
-  // Adiciona amostras dinâmicas ao profile para treino massivo
+
+  // Sprint 3 – T1: dynamicSamples já contém apenas amostras de fixação
+  // (feedRawData filtra trânsito + onset + piscada parcial)
   for (const s of dynamicSamples) {
     profile.push({
-      screenX: s.screenX,
-      screenY: s.screenY,
-      featuresLeft: s.featuresLeft,
-      featuresRight: s.featuresRight
+      screenX:      s.screenX,
+      screenY:      s.screenY,
+      featuresLeft:  s.featuresLeft,
+      featuresRight: s.featuresRight,
     });
   }
 
-  // Extrai matrizes de treino
-  const trainFeaturesLeft = profile.map(p => p.featuresLeft);
-  const trainFeaturesRight = profile.map(p => p.featuresRight);
-  const trainTargets = profile.map(p => ({ screenX: p.screenX, screenY: p.screenY }));
+  const instruction = document.getElementById("calibration-instruction");
+  if (instruction) {
+    instruction.innerHTML = `<span class="phase-badge">Otimizando modelo…</span>`;
+  }
 
-  // Fit the Standard Scaler
+  const trainFeaturesLeft  = profile.map(p => p.featuresLeft);
+  const trainFeaturesRight = profile.map(p => p.featuresRight);
+  const trainTargets       = profile.map(p => ({ screenX: p.screenX, screenY: p.screenY }));
+
+  // Fit scalers
   featureScalerLeft.fit(trainFeaturesLeft);
   featureScalerRight.fit(trainFeaturesRight);
 
-  // Normaliza features
-  const scaledFeaturesLeft = featureScalerLeft.transform(trainFeaturesLeft);
-  const scaledFeaturesRight = featureScalerRight.transform(trainFeaturesRight);
+  const scaledLeft  = featureScalerLeft.transform(trainFeaturesLeft);
+  const scaledRight = featureScalerRight.transform(trainFeaturesRight);
 
-  // Treina o modelo Ridge Binocularmente
-  ridgeModelLeft = trainRidgeModel(scaledFeaturesLeft, trainTargets);
-  ridgeModelRight = trainRidgeModel(scaledFeaturesRight, trainTargets);
+  // Sprint 3 – T3: λ ótimo por LOO-CV (usa olho esquerdo; aplica a ambos)
+  const bestLambda = findBestLambda(scaledLeft, trainTargets);
+
+  // Sprint 3 – T3: treina com λ ótimo
+  ridgeModelLeft  = trainRidgeModel(scaledLeft,  trainTargets, bestLambda);
+  ridgeModelRight = trainRidgeModel(scaledRight, trainTargets, bestLambda);
+
+  // Sprint 3 – T4: hull (bounding box) dos pontos de calibração
+  calibHull = {
+    minX: Math.min(...trainTargets.map(t => t.screenX)),
+    maxX: Math.max(...trainTargets.map(t => t.screenX)),
+    minY: Math.min(...trainTargets.map(t => t.screenY)),
+    maxY: Math.max(...trainTargets.map(t => t.screenY)),
+  };
+
+  // Sprint 4 – T4: pose de referência = média das poses de fixação da calibração
+  if (calibrationPoses.length > 0) {
+    refHeadPose = averageHeadPose(calibrationPoses);
+  }
+  poseCheckDone = false;
+  sessionCorrection = null;
+
+  console.info(`[IrisFlow S3] Amostras de treino: ${profile.length} | Hull: [${calibHull.minX.toFixed(2)},${calibHull.maxX.toFixed(2)}]×[${calibHull.minY.toFixed(2)},${calibHull.maxY.toFixed(2)}]`);
+  if (refHeadPose) {
+    console.info(`[IrisFlow S4] Pose ref: tx=${refHeadPose.tx.toFixed(3)} ty=${refHeadPose.ty.toFixed(3)} tz=${refHeadPose.tz.toFixed(3)} dist=${refHeadPose.distanceCm.toFixed(1)}cm`);
+  }
 
   saveProfile();
   cleanupOverlay();
@@ -743,12 +864,10 @@ export function createControlPanel() {
   `;
   document.body.appendChild(panel);
 
-  // Botão "Iniciar" agora abre a tela de pré-calibração
   document.getElementById("btn-start-calibration")?.addEventListener("click", startPreCalibration);
   document.getElementById("btn-clear-calibration")?.addEventListener("click", clearCalibration);
 }
 
-// ── Atualização da qualidade do sinal de landmarks ───────────────────────────
 export function updateSignalQuality(pct: number): void {
   const bar  = document.getElementById("sq-bar");
   const text = document.getElementById("sq-pct");
@@ -757,19 +876,16 @@ export function updateSignalQuality(pct: number): void {
   if (text) text.textContent = `${pct}%`;
 }
 
-// ── Atualização do FPS display ───────────────────────────────────────────────
 export function updateFpsDisplay(fps: number): void {
   const el = document.getElementById("fps-value");
   if (el) el.textContent = String(fps);
 }
 
-// ── Atualização do alerta de iluminação ──────────────────────────────────────
 export function updateLightingWarning(isDark: boolean): void {
   const el = document.getElementById("lighting-warning");
   if (el) el.style.display = isDark ? 'block' : 'none';
 }
 
-// ── Controles do filtro OneEuro expostos no painel (Sprint 2) ─────────────────
 export function addFilterControls(
   defaultMincutoff: number,
   defaultBeta: number,
@@ -875,19 +991,185 @@ export function init() {
   } catch (_) {}
 }
 
-// ── Mapeamento de Olhar ───────────────────────────────────────────────────────
+// ── Sprint 4 – Detecção de drift inter-sessão ─────────────────────────────────
 
-export function mapGaze(featuresLeft: number[], featuresRight: number[]): { x: number; y: number } | null {
+function averageHeadPose(poses: HeadPose[]): HeadPose {
+  const n = poses.length;
+  const sum = poses.reduce((acc, p) => ({
+    tx: acc.tx + p.tx, ty: acc.ty + p.ty, tz: acc.tz + p.tz,
+    yaw: acc.yaw + p.yaw, pitch: acc.pitch + p.pitch, roll: acc.roll + p.roll,
+    distanceCm: acc.distanceCm + p.distanceCm,
+  }), { tx: 0, ty: 0, tz: 0, yaw: 0, pitch: 0, roll: 0, distanceCm: 0 });
+  return { tx: sum.tx/n, ty: sum.ty/n, tz: sum.tz/n, yaw: sum.yaw/n, pitch: sum.pitch/n, roll: sum.roll/n, distanceCm: sum.distanceCm/n };
+}
+
+// T3: acumula 90 frames de pose após calibração e compara com referência
+const POSE_BUFFER_SIZE = 90;
+const DRIFT_THRESHOLD_TX = 0.04;  // ~4cm em coords normalizadas (empírico)
+const DRIFT_THRESHOLD_TY = 0.04;
+const DRIFT_THRESHOLD_DIST = 10;  // 10cm de mudança de distância
+
+export function feedPoseFrame(pose: HeadPose): void {
+  if (!refHeadPose || poseCheckDone) return;
+  poseBuffer.push(pose);
+  if (poseBuffer.length >= POSE_BUFFER_SIZE) {
+    const avg = averageHeadPose(poseBuffer);
+    poseBuffer = [];
+    poseCheckDone = true;
+    checkInterSessionDrift(avg);
+  }
+}
+
+function checkInterSessionDrift(avg: HeadPose): void {
+  if (!refHeadPose) return;
+  const dTx   = Math.abs(avg.tx   - refHeadPose.tx);
+  const dTy   = Math.abs(avg.ty   - refHeadPose.ty);
+  const dDist = Math.abs(avg.distanceCm - refHeadPose.distanceCm);
+  const hasDrift = dTx > DRIFT_THRESHOLD_TX || dTy > DRIFT_THRESHOLD_TY || dDist > DRIFT_THRESHOLD_DIST;
+  console.info(`[IrisFlow S4] Drift: Δtx=${dTx.toFixed(3)} Δty=${dTy.toFixed(3)} Δdist=${dDist.toFixed(1)}cm — ${hasDrift ? 'OFERECE recalibração' : 'dentro do limite'}`);
+  if (hasDrift) showRecalibrationOffer();
+}
+
+function showRecalibrationOffer(): void {
+  if (document.getElementById('recalib-offer')) return;
+  const banner = document.createElement('div');
+  banner.id = 'recalib-offer';
+  banner.className = 'recalib-offer';
+  banner.innerHTML = `
+    <div class="recalib-msg">Sua posição mudou. Recalibração rápida (5 pontos) para restaurar precisão?</div>
+    <div class="recalib-actions">
+      <button class="btn btn-primary dwell-target" data-key="__express_recalib__">Recalibrar</button>
+      <button class="btn btn-secondary dwell-target" data-key="__dismiss_recalib__">Dispensar</button>
+    </div>
+  `;
+  document.body.appendChild(banner);
+  banner.querySelector('[data-key="__express_recalib__"]')?.addEventListener('click', () => {
+    banner.remove();
+    startExpressRecalibration();
+  });
+  banner.querySelector('[data-key="__dismiss_recalib__"]')?.addEventListener('click', () => {
+    banner.remove();
+  });
+  setTimeout(() => banner.remove(), 30000);
+}
+
+// T3: 5-point express recalibration — fits bias/gain correction on top of existing model
+const EXPRESS_POINTS = [
+  { x: 0.20, y: 0.20 }, { x: 0.80, y: 0.20 }, { x: 0.50, y: 0.50 },
+  { x: 0.20, y: 0.80 }, { x: 0.80, y: 0.80 },
+];
+const EXPRESS_COLLECT_MS = 1000;
+
+export function startExpressRecalibration(): void {
+  if (!isCalibrated() || isCalibrating) return;
+  const predsX: number[] = [], predsY: number[] = [], targX: number[] = [], targY: number[] = [];
+  let idx = 0;
+
+  const { w, h } = getViewport();
+  const overlay = document.createElement('div');
+  overlay.id = 'express-calib-overlay';
+  overlay.className = 'calibration-overlay';
+  overlay.innerHTML = '<div id="express-instruction" class="calibration-instruction">Recalibração rápida — olhe para os pontos</div>';
+  document.body.appendChild(overlay);
+
+  function showPoint() {
+    if (idx >= EXPRESS_POINTS.length) {
+      overlay.remove();
+      if (predsX.length >= 3) {
+        const corrX = fitLinear1D(predsX, targX);
+        const corrY = fitLinear1D(predsY, targY);
+        sessionCorrection = { scaleX: corrX.scale, biasX: corrX.bias, scaleY: corrY.scale, biasY: corrY.bias };
+        console.info(`[IrisFlow S4] Express recalib: scaleX=${corrX.scale.toFixed(3)} biasX=${corrX.bias.toFixed(3)} scaleY=${corrY.scale.toFixed(3)} biasY=${corrY.bias.toFixed(3)}`);
+      }
+      return;
+    }
+    document.getElementById('express-dot')?.remove();
+    const pt = EXPRESS_POINTS[idx];
+    const dot = document.createElement('div');
+    dot.id = 'express-dot';
+    dot.className = 'calibration-dot';
+    dot.style.left = `${Math.round(pt.x * w)}px`;
+    dot.style.top  = `${Math.round(pt.y * h)}px`;
+    dot.innerHTML = '<div class="dot-inner"></div><div class="dot-pulse"></div>';
+    overlay.appendChild(dot);
+
+    const t0 = performance.now();
+    const rawPreds: { nx: number; ny: number }[] = [];
+
+    function collect() {
+      if (performance.now() - t0 < EXPRESS_COLLECT_MS) {
+        const r = getLatestPredRaw();
+        if (r) rawPreds.push({ nx: r.normX, ny: r.normY });
+        requestAnimationFrame(collect);
+      } else {
+        if (rawPreds.length > 0) {
+          const avgNx = rawPreds.reduce((s, v) => s + v.nx, 0) / rawPreds.length;
+          const avgNy = rawPreds.reduce((s, v) => s + v.ny, 0) / rawPreds.length;
+          predsX.push(avgNx); targX.push(pt.x);
+          predsY.push(avgNy); targY.push(pt.y);
+        }
+        idx++;
+        setTimeout(showPoint, 600);
+      }
+    }
+    requestAnimationFrame(collect);
+  }
+  setTimeout(showPoint, 800);
+}
+
+function fitLinear1D(preds: number[], targets: number[]): { scale: number; bias: number } {
+  const n = preds.length;
+  if (n < 2) return { scale: 1, bias: 0 };
+  let sp = 0, st = 0, spp = 0, stp = 0;
+  for (let i = 0; i < n; i++) { sp += preds[i]; st += targets[i]; spp += preds[i]*preds[i]; stp += targets[i]*preds[i]; }
+  const det = n*spp - sp*sp;
+  if (Math.abs(det) < 1e-12) return { scale: 1, bias: 0 };
+  const scale = (n*stp - st*sp) / det;
+  const bias  = (st - scale*sp) / n;
+  return { scale, bias };
+}
+
+function getLatestPredRaw(): { normX: number; normY: number } | null {
+  if (!ridgeModelLeft || !ridgeModelRight || latestFeaturesLeft.length === 0) return null;
+  const sl = featureScalerLeft.transformSingle(latestFeaturesLeft);
+  const sr = featureScalerRight.transformSingle(latestFeaturesRight);
+  const pl = predictRidge(ridgeModelLeft,  sl);
+  const pr = predictRidge(ridgeModelRight, sr);
+  return { normX: (pl.normX + pr.normX) / 2, normY: (pl.normY + pr.normY) / 2 };
+}
+
+// ── Mapeamento de Olhar ───────────────────────────────────────────────────────
+// Sprint 3 – T4: retorna GazeResult com lowConfidence quando fora do hull (G7).
+// Clamp ao viewport mantido para display do cursor, mas SEM compressão linear interna.
+
+export function mapGaze(featuresLeft: number[], featuresRight: number[]): GazeResult | null {
   if (!ridgeModelLeft || !ridgeModelRight) return null;
 
-  const scaledLeft = featureScalerLeft.transformSingle(featuresLeft);
+  const scaledLeft  = featureScalerLeft.transformSingle(featuresLeft);
   const scaledRight = featureScalerRight.transformSingle(featuresRight);
-  
-  const predLeft = predictRidge(ridgeModelLeft, scaledLeft);
+
+  const predLeft  = predictRidge(ridgeModelLeft,  scaledLeft);
   const predRight = predictRidge(ridgeModelRight, scaledRight);
-  
+
+  let normX = (predLeft.normX + predRight.normX) / 2;
+  let normY = (predLeft.normY + predRight.normY) / 2;
+
+  // Sprint 4 – T3: aplica correção inter-sessão bias/ganho se disponível
+  if (sessionCorrection) {
+    normX = normX * sessionCorrection.scaleX + sessionCorrection.biasX;
+    normY = normY * sessionCorrection.scaleY + sessionCorrection.biasY;
+  }
+
+  // Flag de baixa confiança: predição fora do hull de calibração
+  const lowConfidence =
+    normX < calibHull.minX || normX > calibHull.maxX ||
+    normY < calibHull.minY || normY > calibHull.maxY;
+
+  // Sprint 3 – T5: viewport via helper único
+  const { w, h } = getViewport();
   return {
-    x: (predLeft.x + predRight.x) / 2,
-    y: (predLeft.y + predRight.y) / 2
+    x: Math.max(0, Math.min(w, normX * w)),
+    y: Math.max(0, Math.min(h, normY * h)),
+    lowConfidence,
   };
 }
