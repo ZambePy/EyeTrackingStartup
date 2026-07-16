@@ -454,6 +454,7 @@ function cancelCalibration() {
   updateStatusUI();
   isCalibrating = false;
   if (countdownTimer) clearInterval(countdownTimer);
+  window.dispatchEvent(new CustomEvent('irisflow:calibrationCancelled'));
 }
 
 function createCalibrationOverlay() {
@@ -977,6 +978,7 @@ export function updateStatusUI(accuracyResult?: {
         </div>
       `;
     }
+    window.dispatchEvent(new CustomEvent('irisflow:calibrationResult', { detail: accuracyResult }));
   }
 }
 

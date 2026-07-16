@@ -105,6 +105,14 @@ export class DwellManager {
       // Future: add tracking pause logic here
     } else if (key === 'copy') {
       navigator.clipboard.writeText(KeyboardState.getState().text).catch(e => console.error(e));
+    } else if (key === 'enter') {
+      KeyboardState.appendText('\n');
+    } else if (key === 'num_toggle') {
+      window.dispatchEvent(new CustomEvent('kb:num-toggle'));
+    } else if (key === 'clear_confirm') {
+      window.dispatchEvent(new CustomEvent('kb:clear-confirm'));
+    } else if (key.startsWith('qp:')) {
+      window.dispatchEvent(new CustomEvent('irisflow:qp-action', { detail: key }));
     } else if (key.startsWith('nav:')) {
       // Navegação entre telas — evento capturado pelo Router
       const route = key.slice(4)

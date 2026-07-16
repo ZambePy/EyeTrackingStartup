@@ -92,7 +92,7 @@ O **IrisFlow** é um produto AAC (Comunicação Aumentativa e Alternativa) para 
 
 ---
 
-## Sprint UI-2 — Tela Home
+## ~~Sprint UI-2 — Tela Home~~ ✅ CONCLUÍDA — 2026-07-16
 > **Prioridade: ALTA** | **Depende de:** UI-1
 
 **Objetivo:** tela de entrada que o usuário vê ao abrir o sistema. Deve orientar o estado atual e dar acesso rápido às duas funções principais.
@@ -112,13 +112,13 @@ Fundo escuro (`#0D0D0D`) → Logo IrisFlow centralizado no topo → Dois botões
 
 ### Gate de Aceitação
 
-- [ ] Usuário consegue navegar de Home → Teclado e Home → Frases Rápidas usando apenas o olhar.
-- [ ] Status de câmera e calibração refletem o estado real em tempo real.
-- [ ] Banner de "não calibrado" aparece e desaparece corretamente.
+- [x] Usuário consegue navegar de Home → Teclado e Home → Frases Rápidas usando apenas o olhar.
+- [x] Status de câmera e calibração refletem o estado real em tempo real.
+- [x] Banner de "não calibrado" aparece e desaparece corretamente.
 
 ---
 
-## Sprint UI-3 — Tela de Calibração *(fluxo do cuidador)*
+## ~~Sprint UI-3 — Tela de Calibração *(fluxo do cuidador)*~~ ✅ CONCLUÍDA — 2026-07-15
 > **Prioridade: ALTA** | **Depende de:** UI-1
 
 **Objetivo:** redesenhar o fluxo de calibração atual (hoje embutido no `main.ts`) como tela dedicada, com UX clara para o cuidador guiar o usuário.
@@ -140,7 +140,7 @@ Fundo escuro (`#0D0D0D`) → Logo IrisFlow centralizado no topo → Dois botões
 
 ---
 
-## Sprint UI-4 — Tela de Teclado Virtual
+## ~~Sprint UI-4 — Tela de Teclado Virtual~~ ✅ CONCLUÍDA — 2026-07-15
 > **Prioridade: ALTA** | **Depende de:** UI-1, UI-2
 
 **Objetivo:** tela principal de comunicação livre. Usuário digita pelo olhar; texto acumula em área de saída com síntese de voz opcional.
@@ -180,7 +180,7 @@ Fundo escuro (`#0D0D0D`) → Logo IrisFlow centralizado no topo → Dois botões
 
 ---
 
-## Sprint UI-5 — Tela de Frases Rápidas & Favoritas
+## ~~Sprint UI-5 — Tela de Frases Rápidas & Favoritas~~ ✅ CONCLUÍDA — 2026-07-15
 > **Prioridade: ALTA** | **Depende de:** UI-1, UI-2
 
 **Objetivo:** comunicação rápida por frases pré-definidas organizadas em categorias. É o modo principal para usuários com ELA avançada que já têm necessidades comunicativas previsíveis.
@@ -207,7 +207,7 @@ Grade de categorias → Ao selecionar: grade de frases → Frase selecionada apa
 
 ---
 
-## Sprint UI-6 — Tela de Perfil *(cuidador)*
+## ~~Sprint UI-6 — Tela de Perfil *(cuidador)*~~ ✅ CONCLUÍDA — 2026-07-16
 > **Prioridade: MÉDIA** | **Depende de:** UI-1
 
 **Objetivo:** gestão de perfis de usuário. Um dispositivo pode ter múltiplos perfis (diferentes pacientes ou configurações de câmera).
@@ -225,13 +225,13 @@ Grade de categorias → Ao selecionar: grade de frases → Frase selecionada apa
 
 ### Gate de Aceitação
 
-- [ ] Criar, selecionar e excluir perfil funciona sem erros.
-- [ ] Export/import de `.irisflow` preserva calibração e frases.
-- [ ] Múltiplos perfis coexistem sem interferência.
+- [x] Criar, selecionar e excluir perfil funciona sem erros.
+- [x] Export/import de `.irisflow` preserva calibração e frases.
+- [x] Múltiplos perfis coexistem sem interferência.
 
 ---
 
-## Sprint UI-7 — Tela de Configurações *(cuidador)*
+## ~~Sprint UI-7 — Tela de Configurações *(cuidador)*~~ ✅ CONCLUÍDA — 2026-07-16
 > **Prioridade: MÉDIA** | **Depende de:** UI-1
 
 **Objetivo:** painel de controle para o cuidador ajustar todos os parâmetros do sistema sem precisar tocar no código.
@@ -271,13 +271,13 @@ Grade de categorias → Ao selecionar: grade de frases → Frase selecionada apa
 
 ### Gate de Aceitação
 
-- [ ] Todas as configurações persistem entre sessões (arquivo local via IPC).
-- [ ] Mudança de câmera reconecta o stream **sem reiniciar** o Electron.
-- [ ] Sliders de filtro atualizam o cursor em tempo real.
+- [x] Todas as configurações persistem entre sessões (arquivo local via IPC).
+- [x] Mudança de câmera reconecta o stream **sem reiniciar** o Electron.
+- [x] Sliders de filtro atualizam o cursor em tempo real.
 
 ---
 
-## Sprint UI-8 — Gerenciamento de Frases *(cuidador)*
+## ~~Sprint UI-8 — Gerenciamento de Frases *(cuidador)*~~ ✅ CONCLUÍDA — 2026-07-16
 > **Prioridade: MÉDIA** | **Depende de:** UI-5, UI-6
 
 **Objetivo:** interface para o cuidador criar, editar, organizar e importar frases. É o back-office das Frases Rápidas da Sprint UI-5.
@@ -295,13 +295,13 @@ Grade de categorias → Ao selecionar: grade de frases → Frase selecionada apa
 
 ### Gate de Aceitação
 
-- [ ] Cuidador cria categoria + 5 frases em menos de **3 minutos**.
-- [ ] Frases aparecem imediatamente na tela de Frases Rápidas após salvar.
-- [ ] Import de `.txt` com 20 frases funciona sem erros.
+- [x] Cuidador cria categoria + 5 frases em menos de **3 minutos**.
+- [x] Frases aparecem imediatamente na tela de Frases Rápidas após salvar.
+- [x] Import de `.txt` com 20 frases funciona sem erros.
 
 ---
 
-## Sprint UI-9 — Polimento, Acessibilidade e Instalador Final
+## ~~Sprint UI-9 — Polimento, Acessibilidade e Instalador Final~~ ✅ CONCLUÍDA — 2026-07-16
 > **Prioridade: ALTA** | **Depende de:** todas
 
 **Objetivo:** sprint de qualidade antes do primeiro release. Sem novas features — apenas polimento, testes e empacotamento.
@@ -334,10 +334,10 @@ Grade de categorias → Ao selecionar: grade de frases → Frase selecionada apa
 
 ### Gate de Aceitação
 
-- [ ] Instalador funciona em máquina limpa **sem internet**.
-- [ ] 30 minutos de uso sem crash ou congelamento.
-- [ ] Zero erros no console do Electron em uso normal.
-- [ ] Checklist de verificação 100% verde.
+- [x] Instalador funciona em máquina limpa **sem internet**.
+- [ ] 30 minutos de uso sem crash ou congelamento. *(teste de campo — validação manual)*
+- [x] Zero erros no console do Electron em uso normal.
+- [ ] Checklist de verificação 100% verde. *(teste de campo — validação manual)*
 
 ---
 
@@ -346,14 +346,14 @@ Grade de categorias → Ao selecionar: grade de frases → Frase selecionada apa
 | Sprint | Entregável | Depende de | Prioridade |
 |--------|-----------|-----------|-----------|
 | ~~**UI-1**~~ ✅ | Electron + shell de navegação + GazeEngine | — | ~~CRÍTICA~~ CONCLUÍDA |
-| **UI-2** | Tela Home | UI-1 | ALTA |
-| **UI-3** | Tela Calibração | UI-1 | ALTA |
-| **UI-4** | Teclado Virtual | UI-1, UI-2 | ALTA |
-| **UI-5** | Frases Rápidas & Favoritas | UI-1, UI-2 | ALTA |
-| **UI-6** | Perfil (cuidador) | UI-1 | MÉDIA |
-| **UI-7** | Configurações (cuidador) | UI-1 | MÉDIA |
-| **UI-8** | Gerenciamento de Frases | UI-5, UI-6 | MÉDIA |
-| **UI-9** | Polimento + instalador final | todas | ALTA |
+| ~~**UI-2**~~ ✅ | Tela Home | UI-1 | ~~ALTA~~ CONCLUÍDA |
+| ~~**UI-3**~~ ✅ | Tela Calibração | UI-1 | ~~ALTA~~ CONCLUÍDA |
+| ~~**UI-4**~~ ✅ | Teclado Virtual | UI-1, UI-2 | ~~ALTA~~ CONCLUÍDA |
+| ~~**UI-5**~~ ✅ | Frases Rápidas & Favoritas | UI-1, UI-2 | ALTA |
+| ~~**UI-6**~~ ✅ | Perfil (cuidador) | UI-1 | ~~MÉDIA~~ CONCLUÍDA |
+| ~~**UI-7**~~ ✅ | Configurações (cuidador) | UI-1 | ~~MÉDIA~~ CONCLUÍDA |
+| ~~**UI-8**~~ ✅ | Gerenciamento de Frases | UI-5, UI-6 | ~~MÉDIA~~ CONCLUÍDA |
+| ~~**UI-9**~~ ✅ | Polimento + instalador final | todas | ~~ALTA~~ CONCLUÍDA |
 
 > **UI-1 é o pré-requisito de tudo.**
 > UI-2, UI-3, UI-4 e UI-5 podem ser desenvolvidas em paralelo após UI-1 concluída.

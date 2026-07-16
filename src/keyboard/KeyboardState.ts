@@ -69,7 +69,26 @@ class KeyboardStateManager {
       return;
     }
 
-    const mockDictionary = ["ola", "como", "voce", "esta", "sim", "nao", "quero", "agua", "comida", "ajuda", "dor", "bem"];
+    const mockDictionary = [
+      // Cumprimentos
+      "ola","oi","bom","boa","dia","tarde","noite","obrigado","obrigada","por","favor","desculpe",
+      // Necessidades
+      "agua","comida","banheiro","ajuda","fome","sede","frio","calor","cansado","cansada","dor",
+      "remedio","medico","enfermeira","hospital","emergencia",
+      // Respostas
+      "sim","nao","talvez","claro","entendi","nao entendi","repita","espere",
+      // Sentimentos
+      "bem","mal","triste","feliz","medo","ansioso","ansiosa","confortavel","desconfortavel",
+      // Verbos
+      "quero","preciso","posso","pode","vou","tenho","estou","sinto","gosto",
+      // Perguntas
+      "como","quando","onde","porque","qual","quem","quanto","voce","esta","e",
+      // Social
+      "eu","me","meu","minha","nos","familia","mae","pai","filho","filha","esposa","marido",
+      // Misc AAC
+      "agora","depois","antes","hoje","amanha","aqui","ali","isso","muito","pouco",
+      "mais","menos","sempre","nunca","tudo","nada","todos",
+    ];
     const matches = mockDictionary.filter(w => w.startsWith(lastWord) && w !== lastWord).slice(0, 3);
     this.updateState({ suggestions: matches });
   }

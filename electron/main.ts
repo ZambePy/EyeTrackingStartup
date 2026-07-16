@@ -2,6 +2,16 @@ import { app, BrowserWindow, ipcMain, protocol, net } from 'electron'
 import path from 'path'
 import fs from 'fs'
 
+// electron-updater é opcional — instalado separadamente após npm install
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let autoUpdater: any = null
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  autoUpdater = require('electron-updater').autoUpdater
+} catch {
+  console.info('[AutoUpdater] electron-updater não instalado — atualizações desativadas')
+}
+
 // Registrar esquema personalizado ANTES de app.ready
 // Isso permite fetch() para irisflow:// — crítico para MediaPipe WASM offline
 protocol.registerSchemesAsPrivileged([
@@ -109,3 +119,25 @@ ipcMain.handle('export-log', (_event, data: string) => {
 })
 
 ipcMain.handle('get-app-version', () => app.getVersion())
+
+// ── Auto-updater (desativado por padrão — ativado pelo usuário em Configurações) ─
+if (autoUpdater) {
+  autoUpdater.autoDownload         = false
+  autoUpdater.autoInstallOnAppQuit = false
+
+  autoUpdater.on('update-available', (info: { version: string }) => {
+    console.info('[AutoUpdater] Atualização disponível:', info.version)
+  })
+  autoUpdater.on('error', (err: Error) => {
+    console.warn('[AutoUpdater] Erro:', err.message)
+  })
+}
+
+// O renderer envia este evento quando o usuário ativa atualizações automáticas
+ipcMain.on('set-auto-updater', (_event, enabled: boolean) => {
+  if (enabled && app.isPackaged && autoUpdater) {
+    autoUpdater.checkForUpdates().catch((err: Error) => {
+      console.warn('[AutoUpdater] Falha ao verificar atualizações:', err)
+    })
+  }
+})

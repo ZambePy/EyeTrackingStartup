@@ -42,6 +42,12 @@ class RouterImpl {
 
     this.currentRoute = route
     next.mount(this.container)
+
+    // Animação de entrada consistente em todas as telas (200ms fade)
+    if (this.container.firstElementChild) {
+      this.container.firstElementChild.classList.add('screen-enter')
+    }
+
     this.navigateCallbacks.forEach(cb => cb(route))
   }
 

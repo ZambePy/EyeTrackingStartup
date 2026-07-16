@@ -4,18 +4,27 @@ copyright: IrisFlow Team
 
 directories:
   output: release
+  buildResources: build
 
 files:
   - dist/**/*
   - dist-electron/**/*
   - package.json
 
-# WASM e modelos fora do ASAR para que fetch(file://) funcione
+# WASM e modelos fora do ASAR para que fetch(irisflow://) funcione offline
 asarUnpack:
   - dist/mediapipe/**
   - dist/models/**
 
+# ── Ícones ────────────────────────────────────────────────────────────────────
+# Coloque os ícones em build/ antes de empacotar:
+#   build/icon.ico   (Windows — 256×256 mínimo)
+#   build/icon.icns  (macOS)
+#   build/icon.png   (Linux — 512×512)
+
+# ── Windows (NSIS installer) ─────────────────────────────────────────────────
 win:
+  icon: build/icon.ico
   target:
     - target: nsis
       arch: [x64]
@@ -26,12 +35,38 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
+  shortcutName: IrisFlow
 
+# ── macOS ────────────────────────────────────────────────────────────────────
 mac:
-  target: dmg
+  icon: build/icon.icns
+  category: public.app-category.medical
+  target:
+    - target: dmg
+      arch: [x64, arm64]
 
+dmg:
+  title: IrisFlow ${version}
+
+# ── Linux ────────────────────────────────────────────────────────────────────
 linux:
-  target: AppImage
+  icon: build/icon.png
+  category: Utility
+  target:
+    - target: AppImage
+      arch: [x64]
+
+# ── Auto-updater (desativado por padrão — ativado nas Configurações) ─────────
+# Para habilitar: defina GH_TOKEN no ambiente de build e configure o repositório.
+publish:
+  provider: github
+  owner: irisflow-team
+  repo: irisflow
+  releaseType: release
+
+# Não verificar atualizações automaticamente no startup — controlado pela UI
+autoUpdater:
+  fullChangelog: true
 
 extraMetadata:
   main: dist-electron/main.js
