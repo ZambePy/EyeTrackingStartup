@@ -1,0 +1,162 @@
+================================================================================
+IRISFLOW x EYETHEIA — ACOMPANHAMENTO DE SPRINTS
+================================================================================
+Última atualização: 2026-07-17
+
+--------------------------------------------------------------------------------
+FASE D — DIAGNÓSTICO
+--------------------------------------------------------------------------------
+
+[SPRINT D1] Reprodução do EyeTheia do zero
+Status: CONCLUÍDA ✅
+Data: 2026-07-17
+
+  [x] Clonar repositório EyeTheia → Desktop/EyeTheia
+  [x] Criar venv Python 3.11 isolado (eyetheia-env)
+  [x] Instalar PyTorch 2.6.0+cu124 (CUDA 12.4, GTX 1660 Ti)
+  [x] Instalar requirements.txt (mediapipe, fastapi, onnx, etc.)
+  [x] Gerar requirements.lock com versões exatas
+  [x] Subir servidor mpiiface (porta 8002) — boot ~4.2s ✅
+  [x] Subir servidor baseline (porta 8001) — boot ~1.1s ✅
+  [x] Mapear rotas HTTP e protocolos WebSocket reais
+  [x] Escrever docs/eyetheia-repro.md
+  [ ] Fine-tuning 13 pontos < 3 min (pendente — requer webcam + UI)
+  [ ] Export ONNX válido no navegador (pendente — requer calibração prévia)
+
+Gate D1: PARCIALMENTE APROVADO
+  ✅ Dois checkpoints rodam com CUDA
+  ✅ Protocolos documentados
+  ⏳ Fine-tuning e ONNX: validar em E3/E4
+
+Descobertas relevantes:
+  - WS endpoints reais: /ws/predict_gaze e /ws/calibration
+    (roadmap dizia /ws_model e /ws_calibration — corrigido)
+  - Calibração espera 17 samples fixos (não 5/9/13 como no roadmap)
+  - Porta por checkpoint: mpiiface=8002, baseline=8001 (hardcoded)
+
+--------------------------------------------------------------------------------
+
+[SPRINT D2] Benchmark: EyeTheia vs. pipeline ridge atual
+Status: PENDENTE ⏳
+Dependência: E2 (cliente WS) e E3 (calibração na UI) precisam estar prontos
+
+  [ ] Definir protocolo fixo de avaliação (grade 3x3, mesma câmera/iluminação)
+  [ ] Medir pipeline ridge atual: erro px/graus, latência, FPS, taxa sem predição
+  [ ] Medir EyeTheia mpiiface sem calibração
+  [ ] Medir EyeTheia mpiiface + fine-tuning 17 pontos
+  [ ] Medir EyeTheia baseline + fine-tuning 17 pontos
+  [ ] Cenários: cabeça estática, micro-movimentos, óculos, iluminação lateral
+  [ ] Escrever docs/benchmark-d2.md com tabelas e decisão recomendada
+
+Gate D2: PENDENTE
+
+--------------------------------------------------------------------------------
+
+[SPRINT D3] Auditoria de compatibilidade com stack IrisFlow + Electron
+Status: CONCLUÍDA ✅
+Data: 2026-07-17
+
+  [x] Compatibilidade de landmarks: Tasks Vision TS COMPATÍVEL com FaceMesh Python (mesmos índices)
+  [x] Estratégia de sidecar: PyInstaller CPU-only para prod; venv dev com script bat
+  [x] Dois modos definidos: Calibração (sidecar+PyTorch) ↔ Uso diário (ORT Web Worker, sem Python)
+  [x] ONNX opset 18 validado com ORT CPU — fix CrossMapLRN2d→LocalResponseNorm documentado (ADR-4)
+  [x] Threading: ORT Web em Web Worker separado do GazeEngine (Main Thread)
+  [x] Fronteira GPLv3: sidecar como processo filho via HTTP/WS local (ADR-5)
+  [x] Escrever docs/arquitetura-integracao.md com diagrama e 5 ADRs
+  [x] Prova de conceito: eyetheia_base.onnx (24 MB) gerado e testado com ORT CPU
+
+Gate D3: APROVADO ✅
+  ✅ Arquitetura aprovada (5 ADRs documentados)
+  ✅ public/models/eyetheia_base.onnx — opset 18, inferência ORT confirmada
+  ✅ Pode avançar para Fase E
+
+--------------------------------------------------------------------------------
+FASE E — INTEGRAÇÃO DO PIPELINE
+--------------------------------------------------------------------------------
+
+[SPRINT E1] Sidecar EyeTheia gerenciado pelo Electron
+Status: PENDENTE ⏳
+  [ ] Módulo main/sidecar.ts: spawn, health-check, restart, kill no quit
+  [ ] Logs do sidecar canalizados para log do Electron
+  [ ] Tela de estado: iniciando / pronto / erro
+  [ ] Envio de dimensões reais da tela via handshake
+  [ ] Script dev que ativa o venv correto
+
+Gate E1: PENDENTE
+
+[SPRINT E2] Captura no renderer e protocolo WebSocket binário
+Status: PENDENTE ⏳
+  [ ] Adaptar saída de landmarks do Tasks Vision ao formato EyeTheia
+  [ ] Encoder JPEG (OffscreenCanvas, qualidade 0.7) + payload binário
+  [ ] Handshake de dimensões de tela
+  [ ] Loop latest-only no cliente
+  [ ] Overlay de debug (ponto bruto vs filtrado, FPS, RTT)
+
+Gate E2: PENDENTE
+
+[SPRINT E3] Calibração adaptada para ELA
+Status: PENDENTE ⏳
+  [ ] Tela de calibração: animação de alvo, 17 pontos, sequenciamento
+  [ ] Fluxo cuidador-assistido: captura automática por estabilização
+  [ ] Fluxo autônomo: contagem regressiva + pausa por piscada longa
+  [ ] Cliente WS /ws/calibration completo
+  [ ] Critério de qualidade de sample (descartar olhos fechados/instáveis)
+  [ ] Tela de progresso do fine-tuning
+  [ ] Validação pós-calibração com semáforo (verde/amarelo/vermelho)
+
+Gate E3: PENDENTE
+
+[SPRINT E4] Export ONNX e inferência local no renderer
+Status: PENDENTE ⏳
+  [ ] Cliente das rotas /onnx: export, poll, download, cache por perfil
+  [ ] extract_features em TypeScript (crops 224x224, face grid 25x25)
+  [ ] ORT Web em Web Worker (WASM + fallback WebGPU)
+  [ ] Harness de paridade PyTorch vs ONNX (tolerância 1px)
+  [ ] Chaveamento calibração ↔ uso diário
+  [ ] One Euro Filter portado para TS com mesmos parâmetros
+
+Gate E4: PENDENTE
+
+[SPRINT E5] Camada de seleção por olhar
+Status: PENDENTE ⏳
+  [ ] Detector de fixação (I-DT ou I-VT)
+  [ ] Dwell-to-select configurável (300–3000ms) com anel de progresso
+  [ ] Piscada intencional como seleção alternativa
+  [ ] Anti-Midas-touch: zona de descanso, cooldown, sair-e-voltar
+  [ ] Hit-testing com margem adaptativa ao erro de calibração
+  [ ] API de eventos: gazeenter, gazeleave, dwellprogress, select
+
+Gate E5: PENDENTE
+
+[SPRINT E6] Robustez do pipeline
+Status: PENDENTE ⏳
+  [ ] Estado tracking lost + recuperação automática
+  [ ] Recalibração rápida de 1 ponto
+  [ ] Detecção de queda de qualidade (variância, luminância)
+  [ ] Persistência por perfil (userData/profiles/<id>/)
+  [ ] Suíte de regressão com vídeos gravados no CI
+
+Gate E6: PENDENTE
+
+--------------------------------------------------------------------------------
+FASE U — INTERFACE GRID 3 / TOBII
+--------------------------------------------------------------------------------
+
+[SPRINT U1] Shell da aplicação e navegação global         PENDENTE ⏳
+[SPRINT U2] Grade de comunicação (núcleo AAC)             PENDENTE ⏳
+[SPRINT U3] Teclado por olhar + predição                  PENDENTE ⏳
+[SPRINT U4] Frases rápidas e alertas                      PENDENTE ⏳
+[SPRINT U5] Fluxo de calibração na UI final               PENDENTE ⏳
+[SPRINT U6] Painel do cuidador: configurações             PENDENTE ⏳
+[SPRINT U7] Editor de grades (cuidador)                   PENDENTE ⏳
+[SPRINT U8] Monitor de rastreamento e diagnóstico         PENDENTE ⏳
+[SPRINT U9] Acessibilidade fina e fadiga                  PENDENTE ⏳
+
+--------------------------------------------------------------------------------
+FASE V — VALIDAÇÃO E ENTREGA
+--------------------------------------------------------------------------------
+
+[SPRINT V1] Estudo de validação acadêmica                 PENDENTE ⏳
+[SPRINT V2] Empacotamento e distribuição offline          PENDENTE ⏳
+
+================================================================================
