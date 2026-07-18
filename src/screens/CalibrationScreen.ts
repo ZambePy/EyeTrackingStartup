@@ -2,18 +2,6 @@ import type { Screen } from '../shell/Router'
 import * as calibration from '../calibration'
 import type { AccuracyResult } from '../accuracy'
 
-declare global {
-  interface Window {
-    irisflow?: {
-      saveProfile: (id: string, data: unknown) => Promise<void>
-      loadProfile: (id: string) => Promise<unknown>
-      savePhrases: (data: unknown) => Promise<void>
-      loadPhrases: () => Promise<unknown>
-      exportLog: (data: string) => Promise<void>
-      getAppVersion: () => Promise<string>
-    }
-  }
-}
 
 type Phase = 'instructions' | 'calibrating' | 'results'
 

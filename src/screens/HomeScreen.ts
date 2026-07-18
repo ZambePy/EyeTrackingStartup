@@ -24,6 +24,7 @@ export class HomeScreen implements Screen {
   private styleEl: HTMLStyleElement | null = null
   private tickInterval: ReturnType<typeof setInterval> | null = null
   private cameraTimeoutId: ReturnType<typeof setTimeout> | null = null
+  private sidecarUnsubscribe: (() => void) | null = null
 
   // Rastreamento de câmera e FPS via GazeEngine
   private lastGazeTime  = 0
@@ -78,6 +79,12 @@ export class HomeScreen implements Screen {
     // Atualiza status bar a cada segundo
     this.tickInterval = setInterval(() => this.tick(), 1000)
 
+    // Escuta mudanças de status do motor de rastreamento (sidecar)
+    if (window.sidecar) {
+      this.sidecarUnsubscribe = window.sidecar.onStatusChange(() => this.updateSidecarBadge())
+      void window.sidecar.getStatus().then(() => this.updateSidecarBadge())
+    }
+
     this.render()
   }
 
@@ -85,8 +92,10 @@ export class HomeScreen implements Screen {
     GazeEngine.off('gazeMove', this.onGazeMove)
     if (this.tickInterval)    clearInterval(this.tickInterval)
     if (this.cameraTimeoutId) clearTimeout(this.cameraTimeoutId)
-    this.tickInterval    = null
-    this.cameraTimeoutId = null
+    this.sidecarUnsubscribe?.()
+    this.tickInterval       = null
+    this.cameraTimeoutId    = null
+    this.sidecarUnsubscribe = null
     this.el?.remove()
     this.el = null
     this.styleEl?.remove()
@@ -262,12 +271,43 @@ export class HomeScreen implements Screen {
       <div class="hs-stat">
         <span class="hs-stat-label hs-stat--fps">${this.cameraActive ? fps + ' fps' : '— fps'}</span>
       </div>
+      <div class="hs-stat-sep"></div>
+      <div class="hs-stat" id="hs-sidecar-stat">
+        <span class="hs-dot hs-dot--yellow" title="Motor iniciando"></span>
+        <span class="hs-stat-label">Motor: iniciando</span>
+      </div>
     `
   }
 
   private updateStatusBar(): void {
     const bar = document.getElementById('hs-statusbar')
     if (bar) bar.innerHTML = this.statusBarHTML()
+  }
+
+  private updateSidecarBadge(): void {
+    // Atualização pontual sem re-renderizar a tela inteira
+    const stat = document.getElementById('hs-sidecar-stat')
+    if (!stat) return
+    void window.sidecar?.getStatus().then(status => {
+      const labels: Record<string, string> = {
+        starting: 'Motor: iniciando',
+        ready:    'Motor: pronto',
+        error:    'Motor: erro',
+        stopped:  'Motor: parado',
+      }
+      const dotClass: Record<string, string> = {
+        starting: 'hs-dot--yellow',
+        ready:    'hs-dot--green',
+        error:    'hs-dot--red',
+        stopped:  'hs-dot--red',
+      }
+      const cls = dotClass[status] ?? 'hs-dot--yellow'
+      const lbl = labels[status] ?? 'Motor: —'
+      stat.innerHTML = `
+        <span class="hs-dot ${cls}" title="${lbl}"></span>
+        <span class="hs-stat-label">${lbl}</span>
+      `
+    })
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────

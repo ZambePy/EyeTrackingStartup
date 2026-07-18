@@ -75,14 +75,21 @@ FASE E — INTEGRAÇÃO DO PIPELINE
 --------------------------------------------------------------------------------
 
 [SPRINT E1] Sidecar EyeTheia gerenciado pelo Electron
-Status: PENDENTE ⏳
-  [ ] Módulo main/sidecar.ts: spawn, health-check, restart, kill no quit
-  [ ] Logs do sidecar canalizados para log do Electron
-  [ ] Tela de estado: iniciando / pronto / erro
-  [ ] Envio de dimensões reais da tela via handshake
-  [ ] Script dev que ativa o venv correto
+Status: CONCLUÍDA ✅
+Data: 2026-07-17
 
-Gate E1: PENDENTE
+  [x] electron/sidecar.ts: spawn, health-check (poll 2s), restart com backoff exponencial, kill no quit
+  [x] Logs canalizados para console do Electron com prefixo [sidecar]
+  [x] Badge "Motor: iniciando / pronto / erro" na status bar do HomeScreen
+  [x] Envio de dimensões reais da tela via POST /config/update_screen quando pronto
+  [x] start-sidecar-dev.bat para dev manual; prod usa paths de PyInstaller (Sprint V2)
+  [x] src/global.d.ts com tipos window.irisflow e window.sidecar centralizados
+
+Gate E1: APROVADO ✅
+  ✅ Boot em ~4.3s (< 15s)
+  ✅ Stop-Process mata o servidor sem órfão
+  ✅ Screen update: 1920×1080 confirmado pelo servidor
+  ✅ TypeScript sem erros (electron + renderer)
 
 [SPRINT E2] Captura no renderer e protocolo WebSocket binário
 Status: PENDENTE ⏳

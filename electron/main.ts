@@ -1,6 +1,7 @@
-import { app, BrowserWindow, ipcMain, protocol, net } from 'electron'
+import { app, BrowserWindow, ipcMain, protocol, net, screen } from 'electron'
 import path from 'path'
 import fs from 'fs'
+import { sidecarManager } from './sidecar'
 
 // electron-updater é opcional — instalado separadamente após npm install
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -28,7 +29,7 @@ function getDistPath(): string {
   return path.join(__dirname, '..', 'dist')
 }
 
-function createWindow(): void {
+function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -50,11 +51,13 @@ function createWindow(): void {
   } else {
     win.loadFile(path.join(app.getAppPath(), 'dist', 'index.html'))
   }
+  return win
 }
 
+// Mantém referência da janela principal para enviar eventos de sidecar
+let mainWindow: BrowserWindow | null = null
+
 app.whenReady().then(() => {
-  // Protocolo irisflow:// serve arquivos locais (WASM + modelo do MediaPipe)
-  // evitando restrições de CORS com file:// no renderer
   protocol.handle('irisflow', async (request) => {
     const url = new URL(request.url)
     const parts = url.pathname.split('/').filter(Boolean)
@@ -63,11 +66,33 @@ app.whenReady().then(() => {
     return net.fetch(fileUrl)
   })
 
-  createWindow()
+  mainWindow = createWindow()
+
+  // Inicia o sidecar e empurra atualizações de status para o renderer
+  sidecarManager.on('status', (status: string) => {
+    mainWindow?.webContents.send('sidecar-status-changed', status)
+    console.log(`[sidecar] status → ${status}`)
+
+    // Quando pronto, envia dimensões reais da tela
+    if (status === 'ready') {
+      const { width, height } = screen.getPrimaryDisplay().size
+      sidecarManager.sendScreenSize(width, height)
+      console.log(`[sidecar] screen size sent: ${width}×${height}`)
+    }
+  })
+
+  sidecarManager.start()
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    if (BrowserWindow.getAllWindows().length === 0) {
+      mainWindow = createWindow()
+    }
   })
+})
+
+// Mata o sidecar antes de fechar o app — nenhum processo Python órfão
+app.on('before-quit', () => {
+  sidecarManager.stop()
 })
 
 app.on('window-all-closed', () => {
@@ -119,6 +144,8 @@ ipcMain.handle('export-log', (_event, data: string) => {
 })
 
 ipcMain.handle('get-app-version', () => app.getVersion())
+
+ipcMain.handle('sidecar-get-status', () => sidecarManager.getStatus())
 
 // ── Auto-updater (desativado por padrão — ativado pelo usuário em Configurações) ─
 if (autoUpdater) {

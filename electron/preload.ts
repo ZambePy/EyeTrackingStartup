@@ -14,3 +14,13 @@ contextBridge.exposeInMainWorld('irisflow', {
   getAppVersion: () =>
     ipcRenderer.invoke('get-app-version'),
 })
+
+contextBridge.exposeInMainWorld('sidecar', {
+  getStatus: () =>
+    ipcRenderer.invoke('sidecar-get-status'),
+  onStatusChange: (cb: (status: string) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, status: string) => cb(status)
+    ipcRenderer.on('sidecar-status-changed', listener)
+    return () => ipcRenderer.removeListener('sidecar-status-changed', listener)
+  },
+})
