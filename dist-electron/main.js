@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const electron_1 = require("electron");
 const path_1 = __importDefault(require("path"));
 const fs_1 = __importDefault(require("fs"));
+const sidecar_1 = require("./sidecar");
 // electron-updater é opcional — instalado separadamente após npm install
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let autoUpdater = null;
@@ -52,10 +53,11 @@ function createWindow() {
     else {
         win.loadFile(path_1.default.join(electron_1.app.getAppPath(), 'dist', 'index.html'));
     }
+    return win;
 }
+// Mantém referência da janela principal para enviar eventos de sidecar
+let mainWindow = null;
 electron_1.app.whenReady().then(() => {
-    // Protocolo irisflow:// serve arquivos locais (WASM + modelo do MediaPipe)
-    // evitando restrições de CORS com file:// no renderer
     electron_1.protocol.handle('irisflow', async (request) => {
         const url = new URL(request.url);
         const parts = url.pathname.split('/').filter(Boolean);
@@ -63,11 +65,28 @@ electron_1.app.whenReady().then(() => {
         const fileUrl = `file://${filePath.replace(/\\/g, '/')}`;
         return electron_1.net.fetch(fileUrl);
     });
-    createWindow();
-    electron_1.app.on('activate', () => {
-        if (electron_1.BrowserWindow.getAllWindows().length === 0)
-            createWindow();
+    mainWindow = createWindow();
+    // Inicia o sidecar e empurra atualizações de status para o renderer
+    sidecar_1.sidecarManager.on('status', (status) => {
+        mainWindow?.webContents.send('sidecar-status-changed', status);
+        console.log(`[sidecar] status → ${status}`);
+        // Quando pronto, envia dimensões reais da tela
+        if (status === 'ready') {
+            const { width, height } = electron_1.screen.getPrimaryDisplay().size;
+            sidecar_1.sidecarManager.sendScreenSize(width, height);
+            console.log(`[sidecar] screen size sent: ${width}×${height}`);
+        }
     });
+    sidecar_1.sidecarManager.start();
+    electron_1.app.on('activate', () => {
+        if (electron_1.BrowserWindow.getAllWindows().length === 0) {
+            mainWindow = createWindow();
+        }
+    });
+});
+// Mata o sidecar antes de fechar o app — nenhum processo Python órfão
+electron_1.app.on('before-quit', () => {
+    sidecar_1.sidecarManager.stop();
 });
 electron_1.app.on('window-all-closed', () => {
     if (process.platform !== 'darwin')
@@ -109,6 +128,7 @@ electron_1.ipcMain.handle('export-log', (_event, data) => {
     return filename;
 });
 electron_1.ipcMain.handle('get-app-version', () => electron_1.app.getVersion());
+electron_1.ipcMain.handle('sidecar-get-status', () => sidecar_1.sidecarManager.getStatus());
 // ── Auto-updater (desativado por padrão — ativado pelo usuário em Configurações) ─
 if (autoUpdater) {
     autoUpdater.autoDownload = false;

@@ -6,26 +6,8 @@
     <title>IrisFlow</title>
   </head>
   <body>
-    <!--
-      Shell principal do IrisFlow.
-      #app mantém compatibilidade com o código de calibração existente.
-      #app-root é o container de telas gerenciado pelo Router.
-      #laser é o cursor de olhar — elevado acima de tudo via z-index.
-    -->
-    <div id="app">
-      <!-- Câmera: oculta visualmente, usada pelo GazeEngine -->
-      <video id="webcam" autoplay playsinline style="display:none"></video>
-      <canvas id="output_canvas" style="display:none"></canvas>
-
-      <!-- Overlay de carregamento inicial -->
-      <div id="loading" class="overlay">Carregando IrisFlow...</div>
-
-      <!-- Container das telas (gerenciado pelo Router) -->
-      <div id="app-root"></div>
-
-      <!-- Cursor de olhar: sempre acima de tudo, inclusive overlays -->
-      <div id="laser"></div>
-    </div>
-    <script type="module" src="/src/main.ts"></script>
+    <!-- Preact mounts the entire app here, including video/canvas/cursor -->
+    <div id="app"></div>
+    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
